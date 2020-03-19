@@ -7,17 +7,50 @@
 //http://camendesign.com/code/video_for_everybody/test.html
 
 import UIKit
+import UIKit.UIPanGestureRecognizer
 import AVFoundation
+
+private enum State {
+    
+    case closed, open
+}
+
+extension State {
+    var oposite: State {
+        
+        switch self {
+        case .open:
+            return .closed
+        case .closed:
+            return .open
+        }
+    }
+}
 
 class ViewController: UIViewController {
     
+    private var animationProgress: CGFloat = 0
+    
+    var transitionAnimator = UIViewPropertyAnimator()
+    
+    private var currenState: State = .closed
+    
+    private lazy var panRecognizer: InstantPanGestureReognizer = {
+        
+        let recognizer = InstantPanGestureReognizer()
+        
+        recognizer.addTarget(self, action: #selector(popupViewPanned(recognizer:)))
+        
+        return recognizer
+    }()
+    
     lazy var thumbnailImageView: UIImageView = {
-       
+        
         return UIImageView()
     }()
     
     lazy var popupView: UIView = {
-       
+        
         let _popupView = UIView()
         
         _popupView.backgroundColor = UIColor.gray
@@ -35,7 +68,7 @@ class ViewController: UIViewController {
     lazy var videoView: UIView = {
         
         return UIView()
-    
+        
     }()
     
     let videoURLString: String = Bundle.main.path(forResource: "clip", ofType: "mp4")!
@@ -45,7 +78,7 @@ class ViewController: UIViewController {
     }
     
     lazy var asset: AVURLAsset = {
-       
+        
         var asset: AVURLAsset = AVURLAsset(url: url)
         
         return asset
@@ -67,14 +100,14 @@ class ViewController: UIViewController {
     }()
     
     lazy var playerLayer: AVPlayerLayer = {
-       
+        
         var playerLayer: AVPlayerLayer = AVPlayerLayer(player: self.player)
         
         return playerLayer
     }()
     
     
-
+    
     override func viewDidLoad() {
         super.viewDidLoad()
         // Do any additional setup after loading the view.
@@ -84,6 +117,8 @@ class ViewController: UIViewController {
         popupOffset = viewHeight - CGFloat(60)
         
         layout()
+        
+        popupView.addGestureRecognizer(panRecognizer)
     }
     
     func layout() {
@@ -102,7 +137,7 @@ class ViewController: UIViewController {
         
         popupView.heightAnchor.constraint(equalToConstant: viewHeight).isActive = true
         
-        view.addSubview(videoView)
+        popupView.addSubview(videoView)
         
         videoView.translatesAutoresizingMaskIntoConstraints = false
         
@@ -112,17 +147,19 @@ class ViewController: UIViewController {
         
         videoView.trailingAnchor.constraint(equalTo: popupView.trailingAnchor, constant: -30).isActive = true
         
-        videoView.topAnchor.constraint(equalTo: popupView.topAnchor, constant: 60)
+        videoView.topAnchor.constraint(equalTo: popupView.topAnchor, constant: 60).isActive = true
         
         NSLayoutConstraint(item: videoView, attribute: .height, relatedBy: .equal, toItem: videoView, attribute: .width, multiplier: 1, constant: 0).isActive = true
         
-        view.addSubview(thumbnailImageView)
+        popupView.addSubview(thumbnailImageView)
         
         thumbnailImageView.translatesAutoresizingMaskIntoConstraints = false
         
         thumbnailImageView.backgroundColor = UIColor.white
         
-        thumbnailImageView.leadingAnchor.constraint(lessThanOrEqualTo: popupView.leadingAnchor, constant: 10).isActive = true
+        thumbnailImageView.leadingAnchor.constraint(equalTo: popupView.leadingAnchor, constant: 15).isActive = true
+        
+        thumbnailImageView.topAnchor.constraint(equalTo: popupView.topAnchor, constant: 10).isActive = true
         
         thumbnailImageView.heightAnchor.constraint(equalToConstant: 40).isActive = true
         
@@ -131,6 +168,8 @@ class ViewController: UIViewController {
         thumbnailImageView.contentMode = .scaleAspectFit
         
         videoView.layer.insertSublayer(playerLayer, at: 0)
+        
+        thumbnailImageView.image = getThumbnailImage()
         
         
     }
@@ -141,6 +180,154 @@ class ViewController: UIViewController {
         playerLayer.frame = videoView.bounds
         
     }
+    
+    @objc func popupViewPanned (recognizer: UIPanGestureRecognizer) {
+        
+        switch recognizer.state {
+            
+        case .began:
+            
+            if player.isPlaying {
+                
+                player.pause()
+            }
+            
+            thumbnailImageView.alpha = 0
+            
+            animateTransition(to: currenState, duration: 0.8)
+            
+            transitionAnimator.pauseAnimation()
+            
+            animationProgress = transitionAnimator.fractionComplete
+            
+        case .changed:
+            
+            let translation = recognizer.translation(in: popupView)
+            
+            var fraction = -translation.y / popupOffset
+            
+            if currenState == .open {
+                fraction *= -1
+            }
+            
+            if transitionAnimator.isReversed {
+                fraction *= -1
+            }
+            
+            transitionAnimator.fractionComplete = fraction + animationProgress
+            
+        case .ended:
+            
+            let yVelocity = recognizer.velocity(in: popupView).y
+            
+            let shouldClose = yVelocity > 0
+            
+            if yVelocity == 0 {
+                transitionAnimator.continueAnimation(withTimingParameters: nil, durationFactor: 0)
+                
+                break
+            }
+            
+            switch currenState {
+                
+            case .open:
+                
+                if !shouldClose && !transitionAnimator.isReversed {
+                    transitionAnimator.isReversed = !transitionAnimator.isReversed
+                }
+                
+                if shouldClose && transitionAnimator.isReversed {
+                    transitionAnimator.isReversed = transitionAnimator.isReversed
+                }
+                
+            case .closed:
+                
+                if shouldClose && !transitionAnimator.isReversed {
+                    transitionAnimator.isReversed = !transitionAnimator.isReversed
+                }
+                
+                if !shouldClose && transitionAnimator.isReversed {
+                    transitionAnimator.isReversed = !transitionAnimator.isReversed
+                }
+                
+            }
+            
+            transitionAnimator.continueAnimation(withTimingParameters: nil, durationFactor: 0)
+            
+        default:
+            
+            ()
+        }
+    }
+    
+    private func animateTransition (to state: State, duration: TimeInterval) {
+        
+        if transitionAnimator.isRunning {
+            return
+        }
+        transitionAnimator = UIViewPropertyAnimator(duration: duration, dampingRatio: 1.0, animations: {
+            
+            switch state {
+            case .open:
+                
+                self.bottomConstraint.constant = 0
+                
+            case .closed:
+                self.bottomConstraint.constant = self.popupOffset
+            }
+            
+            self.view.layoutIfNeeded()
+        })
+        
+        
+        
+        transitionAnimator.addCompletion { (position) in
+            
+            switch position {
+                
+            case .start:
+                
+                self.currenState = state.oposite
+                
+            case .end:
+                
+                self.currenState = state
+                
+            case .current:
+                
+                ()
+                
+            }
+            
+            switch self.currenState {
+                
+            case .open:
+                
+                self.bottomConstraint.constant = 0
+                
+                self.player.play()
+                
+            case .closed:
+                
+                self.bottomConstraint.constant = self.popupOffset
+                
+                self.thumbnailImageView.transform = CGAffineTransform(scaleX: 1.2, y: 1.2)
+                
+                UIView.animate(withDuration: 0.2) {
+                    
+                    self.thumbnailImageView.transform = CGAffineTransform.identity
+                    
+                    self.thumbnailImageView.alpha = 1.0
+                    
+                }
+            }
+        }
+        
+        transitionAnimator.startAnimation()
+        
+        
+    }
+    
     
     func getThumbnailImage () -> UIImage? {
         
@@ -163,11 +350,25 @@ class ViewController: UIViewController {
     }
 }
 
-extension AVPlayer {
 
+extension AVPlayer {
+    
     var isPlaying: Bool {
         
         return (rate != 0 && (error == nil))
     }
 }
 
+class InstantPanGestureReognizer: UIPanGestureRecognizer {
+    
+    override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent) {
+        
+        if (self.state == UIGestureRecognizer.State.began) {
+            return
+        }
+        
+        super.touchesBegan(touches, with: event)
+        
+        self.state = UIGestureRecognizer.State.began
+    }
+}
